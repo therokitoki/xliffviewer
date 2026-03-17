@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from lxml import etree
 import os
+import ctypes
 
 class UniversalXliffViewer(tk.Tk):
     def __init__(self):
@@ -9,7 +10,7 @@ class UniversalXliffViewer(tk.Tk):
         self.title("XLIFF Viewer")
         self.geometry("1000x600")
         
-        icon_path = os.path.join(os.path.dirname(__file__), "data", "icon.ico")
+        icon_path = os.path.join(os.path.dirname(__file__), "data", "viewer.ico")
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
 
@@ -22,9 +23,17 @@ class UniversalXliffViewer(tk.Tk):
 
         tk.Button(top_frame, text="Open file", command=self.load_file, padx=10).pack(side="left", padx=20)
 
+        # search bar
+        tk.Label(top_frame, text="Search:").pack(side="left", padx=5)
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add("write", self.filter_tree)
+        self.search_entry = tk.Entry(top_frame, textvariable=self.search_var, width=30)
+        self.search_entry.pack(side="left", padx=5)
+
         self.status_label = tk.Label(top_frame, text="No file loaded", fg="gray")
         self.status_label.pack(side="right", padx=20)
 
+    
         table_frame = tk.Frame(self)
         table_frame.pack(expand=True, fill="both", padx=20, pady=10)
 
@@ -61,6 +70,8 @@ class UniversalXliffViewer(tk.Tk):
 
         self.tree.bind("<<TreeviewSelect>>", self.segment_select)
 
+        self.all_data = []
+
     def segment_select(self, event):
         selected = self.tree.selection()
         if not selected:
@@ -89,47 +100,55 @@ class UniversalXliffViewer(tk.Tk):
                 messagebox.showerror("Parser Error", f"Could not read the file:\n{str(e)}")
 
     def parse_xliff(self, path):
-        
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-
-        parser = etree.XMLParser(recover=True)
-        tree = etree.parse(path, parser)
-        
-        units = tree.xpath("//*[local-name()='trans-unit']")
-        
-        if not units:
-            messagebox.showwarning("Warning", "No translation units found in this file.")
-            return
-
-        for unit in units:
-            u_id = unit.get("id", "-")
-
-            if u_id.startswith("lockTU_"):
-                continue
-
-            src_nodes = unit.xpath(".//*[local-name()='source']")
-            tgt_nodes = unit.xpath(".//*[local-name()='target']")
+            for item in self.tree.get_children():
+                self.tree.delete(item)
             
-            if len(src_nodes) > 0:
-                source_text = "".join(src_nodes[0].itertext()).strip()
-                
-                
-                if not source_text:
+            self.all_data = []
+
+            parser = etree.XMLParser(recover=True)
+            tree = etree.parse(path, parser)
+            units = tree.xpath("//*[local-name()='trans-unit']")
+            
+            if not units:
+                messagebox.showwarning("Warning", "No translation units found.")
+                return
+
+            for unit in units:
+                u_id = unit.get("id", "-")
+                if u_id.startswith("lockTU_"):
                     continue
-                
-                
-                target_text = "".join(tgt_nodes[0].itertext()).strip() if tgt_nodes else ""
 
-                status_nodes = unit.xpath(".//@*[local-name()='conf' or local-name()='state']")
+                src_nodes = unit.xpath(".//*[local-name()='source']")
+                tgt_nodes = unit.xpath(".//*[local-name()='target']")
                 
-                # Tomamos el último valor encontrado (suele ser el más específico al segmento)
-                # Si la lista no está vacía, usamos el último; si no, "n/a"
-                state = status_nodes[-1] if status_nodes else "n/a"
-                #state = unit.get("state", "n/a")
+                if len(src_nodes) > 0:
+                    source_text = "".join(src_nodes[0].itertext()).strip()
+                    if not source_text:
+                        continue
+                    
+                    target_text = "".join(tgt_nodes[0].itertext()).strip() if tgt_nodes else ""
+                    status_nodes = unit.xpath(".//@*[local-name()='conf' or local-name()='state']")
+                    state = str(status_nodes[-1]) if status_nodes else "n/a"
 
-                self.tree.insert("", "end", values=(u_id, source_text, target_text, state))
+                    row_values = (u_id, source_text, target_text, state)
+                    self.all_data.append(row_values) 
+                    
+                    self.tree.insert("", "end", values=row_values)
 
+    def filter_tree(self, *args):
+            query = self.search_var.get().lower()
+            
+            # Clean the table
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+                
+            for row in self.all_data:
+                # Searches in Source, Target or Status
+                if query in row[1].lower() or query in row[2].lower() or query in row[3].lower():
+                    self.tree.insert("", "end", values=row)
 if __name__ == "__main__":
+    if os.name == 'nt':
+        myappid = 'roki.viewer.v1'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     app = UniversalXliffViewer()
     app.mainloop()
